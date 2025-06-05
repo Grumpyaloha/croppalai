@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CropPal AI</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom scrollbar for chat messages */
+        .chat-messages::-webkit-scrollbar {
+            width: 8px;
+        }
+        .chat-messages::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 10px;
+        }
+        .chat-messages::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 10px;
+        }
+        .chat-messages::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+        body {
+            font-family: 'Inter', sans-serif; /* Using Inter as a default sans-serif font */
+        }
+        .typing-indicator {
+            display: flex;
+            align-items: center;
+            padding: 8px 12px;
+            border-radius: 8px;
+            background-color: #e2e8f0; /* Tailwind gray-200 */
+            color: #4a5568; /* Tailwind gray-700 */
+            font-style: italic;
+            margin-bottom: 8px;
+        }
+        .typing-indicator span {
+            height: 8px;
+            width: 8px;
+            margin: 0 2px;
+            background-color: #4a5568; /* Tailwind gray-700 */
+            border-radius: 50%;
+            display: inline-block;
+            animation: bounce 1.4s infinite ease-in-out both;
+        }
+        .typing-indicator span:nth-child(1) { animation-delay: -0.32s; }
+        .typing-indicator span:nth-child(2) { animation-delay: -0.16s; }
+        @keyframes bounce {
+            0%, 80%, 100% { transform: scale(0); }
+            40% { transform: scale(1.0); }
+        }
+    </style>
+    <!--
+    NOTES FOR GITHUB PAGES DEPLOYMENT:
+    1. Rename this file to `index.html` if it's not already.
+    2. Create a new public repository on GitHub.
+    3. Add this `index.html` file to your repository.
+    4. In the JavaScript section below, you MUST replace "YOUR_GEMINI_API_KEY_HERE" with your actual Gemini API Key.
+       - Get your key from Google AI Studio: https://aistudio.google.com/app/apikey
+       - WARNING: Exposing API keys in client-side code in a public repository is a security risk.
+         For personal demos or projects where the key has strict quotas/is free, this might be acceptable.
+         For production apps, use a backend proxy or serverless function to protect your API key.
+    5. Commit and push your changes to GitHub.
+    6. Go to your GitHub repository settings > Pages.
+    7. Choose the branch to deploy from (e.g., `main` or `master`) and the folder (usually `/root` or `/docs` if your index.html is there).
+    8. Save, and GitHub Pages will build and deploy your site. It might take a few minutes.
+    9. The Gemini-powered features (yield estimate, diagnosis) will only work if the API key is correctly set.
+    -->
+</head>
+<body class="bg-green-50 flex flex-col items-center justify-center min-h-screen p-4">
+
+    <div class="bg-white shadow-xl rounded-lg w-full max-w-2xl flex flex-col h-[80vh] md:h-[70vh]">
+        <!-- Header -->
+        <header class="bg-green-600 text-white p-4 rounded-t-lg">
+            <h1 class="text-2xl font-semibold text-center">CropPal AI 🧑‍🌾</h1>
+        </header>
+
+        <!-- Chat Messages -->
+        <div id="chatMessages" class="chat-messages flex-1 p-6 space-y-4 overflow-y-auto bg-green-100">
+            <!-- Messages will be appended here -->
+        </div>
+
+        <!-- Message Input -->
+        <footer class="bg-white p-4 border-t border-gray-200 rounded-b-lg">
+            <div class="flex space-x-3">
+                <input type="text" id="userInput" class="flex-1 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none" placeholder="Ask CropPal...">
+                <button id="sendButton" class="bg-green-600 text-white px-6 py-3 rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50 transition duration-150">
+                    Send
+                </button>
+            </div>
+            <p class="text-xs text-gray-500 mt-2 pl-1">
+                Try: "help", "harvest tomato flowering 2024-05-15 for 70 days", "diagnose tomato problem leaves are yellow"
+            </p>
+        </footer>
+    </div>
+
+    <script>
+        const chatMessages = document.getElementById('chatMessages');
+        const userInput = document.getElementById('userInput');
+        const sendButton = document.getElementById('sendButton');
+
+        let plantLogs = {};
+        let typingIndicatorElement = null; // Explicit semicolon added here.
+
+        // --- Gemini API Configuration ---
+        // IMPORTANT: Replace "YOUR_GEMINI_API_KEY_HERE" with your actual Gemini API Key.
+        // Get your key from Google AI Studio: https://aistudio.google.com/app/apikey
+        // SECURITY WARNING: Exposing API keys in client-side code in a public repository is a security risk.
+        // For demos, this might be acceptable if using a restricted key (e.g., for gemini-2.0-flash).
+        // For production, use a backend proxy to protect your API key.
+        const GEMINI_API_KEY = "YOUR_GEMINI_API_KEY_HERE"; // <-- PASTE YOUR ACTUAL GEMINI API KEY HERE
+
+        const GEMINI_MODEL = "gemini-2.0-flash"; // Or any other suitable model
+        const GEMINI_API_URL_BASE = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+
+
+        function initialGreeting() {
+            addMessageToChat("Hello! I'm CropPal AI. How can I help you manage your crops today? Type 'help' for commands.", "bot");
+        }
+
+        function addMessageToChat(message, sender, isHtml = false) {
+            const messageElement = document.createElement('div');
+            messageElement.classList.add('p-3', 'rounded-lg', 'max-w-xs', 'md:max-w-md', 'lg:max-w-lg', 'break-words');
+            if (sender === 'user') {
+                messageElement.classList.add('bg-green-500', 'text-white', 'ml-auto');
+            } else {
+                messageElement.classList.add('bg-white', 'text-gray-800', 'shadow');
+            }
+
+            if (isHtml) {
+                messageElement.innerHTML = message;
+            } else {
+                messageElement.textContent = message;
+            }
+
+            chatMessages.appendChild(messageElement);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        function showTypingIndicator() {
+            if (typingIndicatorElement) return;
+            typingIndicatorElement = document.createElement('div');
+            typingIndicatorElement.classList.add('typing-indicator');
+            typingIndicatorElement.innerHTML = `CropPal AI is thinking... <span></span><span></span><span></span>`;
+            chatMessages.appendChild(typingIndicatorElement);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        function hideTypingIndicator() {
+            if (typingIndicatorElement) {
+                chatMessages.removeChild(typingIndicatorElement);
+                typingIndicatorElement = null;
+            }
+        }
+
+        async function callGeminiAPI(prompt) {
+            if (GEMINI_API_KEY === "YOUR_GEMINI_API_KEY_HERE" || !GEMINI_API_KEY) {
+                return "API Key not configured. Please add your Gemini API Key in the script to use AI features.";
+            }
+            showTypingIndicator();
+            try {
+                const GEMINI_API_URL = `${GEMINI_API_URL_BASE}?key=${GEMINI_API_KEY}`;
+                const payload = {
+                    contents: [{
+                        role: "user",
+                        parts: [{ text: prompt }]
+                    }]
+                };
+                const response = await fetch(GEMINI_API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) {
+                    const errorBody = await response.text();
+                    console.error("Gemini API Error Status:", response.status);
+                    console.error("Gemini API Error Body:", errorBody);
+                    return `Sorry, I encountered an API error (Status: ${response.status}). Please check the console for details. Make sure your API key is valid and the model name is correct.`;
+                }
+
+                const result = await response.json();
+
+                if (result.candidates && result.candidates.length > 0 &&
+                    result.candidates[0].content && result.candidates[0].content.parts &&
+                    result.candidates[0].content.parts.length > 0) {
+                    return result.candidates[0].content.parts[0].text.replace(/\n/g, '<br>');
+                } else if (result.promptFeedback && result.promptFeedback.blockReason) {
+                    console.warn("Gemini API - Prompt Blocked:", result.promptFeedback);
+                    return `My apologies, your request was blocked by the AI's safety settings. Reason: ${result.promptFeedback.blockReason}. Please try rephrasing your query.`;
+                }
+                else {
+                    console.error("Gemini API - Unexpected response structure:", result);
+                    return "Sorry, I received an unexpected response from the AI. Please try again.";
+                }
+            } catch (error) {
+                console.error("Error calling Gemini API:", error);
+                return "Sorry, I couldn't connect to the AI service. Please check your connection or try again later.";
+            } finally {
+                hideTypingIndicator();
+            }
+        }
+
+
+        async function processUserMessage(message) {
+            const lowerMessage = message.toLowerCase().trim();
+            let botResponse = "I'm sorry, I didn't understand that. Type 'help' for available commands.";
+            let isApiResponseHtml = false;
+
+            if (lowerMessage === "help") {
+                botResponse = `Here are some things I can do:
+                1. Calculate harvest time: "harvest [plant] flowering [YYYY-MM-DD] for [days] days"
+                2. Log plant details: "log [plant] notes [your notes]"
+                3. View logs: "show log for [plant]"
+                4. Convert units: "convert [value] [from_unit] to [to_unit]"
+                5. Calculate production cost: "cost [plant] seeds [amt] fertilizer [amt] ..."
+                6. ✨ Estimate yield: "estimate yield for [number] [plant_name] [conditions (optional)]" (e.g., estimate yield for 50 tomato plants in good soil)
+                7. ✨ Diagnose crop problem: "diagnose [plant_name] problem [description]" (e.g., diagnose cucumber problem leaves are wilting)
+                `;
+            }
+            // Harvest Time Calculation
+            else if (lowerMessage.startsWith("harvest ")) {
+                const parts = message.split(" ");
+                if (parts.length === 7 && parts[2].toLowerCase() === "flowering" && parts[4].toLowerCase() === "for" && parts[6].toLowerCase() === "days") {
+                    const plantName = parts[1];
+                    const floweringDateStr = parts[3];
+                    const daysToHarvest = parseInt(parts[5]);
+                    if (!isNaN(daysToHarvest) && Date.parse(floweringDateStr)) {
+                        const floweringDate = new Date(floweringDateStr + "T00:00:00");
+                        const harvestDate = new Date(floweringDate);
+                        harvestDate.setDate(floweringDate.getDate() + daysToHarvest);
+                        botResponse = `For ${plantName} that started flowering on ${floweringDate.toLocaleDateString()}, the estimated harvest date is around ${harvestDate.toLocaleDateString()}.`;
+                    } else {
+                        botResponse = "Please check the date format (YYYY-MM-DD) or the number of days for harvest calculation.";
+                    }
+                } else {
+                    botResponse = "For harvest calculation, please use format: 'harvest [plant] flowering [YYYY-MM-DD] for [days] days'";
+                }
+            }
+            // Log Plant Details
+            else if (lowerMessage.startsWith("log ")) {
+                const parts = message.split(" notes ");
+                if (parts.length === 2) {
+                    const plantNamePart = parts[0].substring(4).trim();
+                    const notes = parts[1].trim();
+                    if (!plantLogs[plantNamePart]) {
+                        plantLogs[plantNamePart] = [];
+                    }
+                    plantLogs[plantNamePart].push({ date: new Date().toLocaleString(), notes: notes });
+                    botResponse = `Logged for ${plantNamePart}: "${notes}".`;
+                } else {
+                    botResponse = "To log details, use format: 'log [plant] notes [your notes]'";
+                }
+            }
+            // Show Logs
+            else if (lowerMessage.startsWith("show log for ")) {
+                const plantName = message.substring(13).trim();
+                if (plantLogs[plantName] && plantLogs[plantName].length > 0) {
+                    let logText = `<strong>Log for ${plantName}:</strong><br>`;
+                    plantLogs[plantName].forEach(entry => {
+                        logText += `- ${entry.date}: ${entry.notes}<br>`;
+                    });
+                    botResponse = logText;
+                    isApiResponseHtml = true;
+                } else {
+                    botResponse = `No logs found for ${plantName}.`;
+                }
+            }
+            // Unit Conversion
+            else if (lowerMessage.startsWith("convert ")) {
+                const parts = message.split(" ");
+                if (parts.length === 5 && parts[3].toLowerCase() === "to") {
+                    const value = parseFloat(parts[1]);
+                    const fromUnit = parts[2].toLowerCase();
+                    const toUnit = parts[4].toLowerCase();
+                    if (isNaN(value)) {
+                        botResponse = "Please provide a valid number for conversion.";
+                    } else {
+                        let result;
+                        if (fromUnit === "kg" && toUnit === "lb") result = value * 2.20462;
+                        else if (fromUnit === "lb" && toUnit === "kg") result = value / 2.20462;
+                        else if (fromUnit === "acres" && toUnit === "hectares") result = value * 0.404686;
+                        else if (fromUnit === "hectares" && toUnit === "acres") result = value / 0.404686;
+                        else if (fromUnit === "g" && toUnit === "oz") result = value * 0.035274;
+                        else if (fromUnit === "oz" && toUnit === "g") result = value / 0.035274;
+
+                        if (result !== undefined) {
+                             botResponse = `${value} ${fromUnit} is approximately ${result.toFixed(2)} ${toUnit}.`;
+                        } else {
+                            botResponse = `Sorry, I can't convert from ${fromUnit} to ${toUnit} yet. I know kg/lb, acres/hectares, g/oz.`;
+                        }
+                    }
+                } else {
+                    botResponse = "For unit conversion, use format: 'convert [value] [from_unit] to [to_unit]'";
+                }
+            }
+            // Production Cost (Simplified)
+            else if (lowerMessage.startsWith("cost ")) {
+                const parts = lowerMessage.substring(5).split(" ");
+                let plantName = "";
+                let costs = {};
+                let currentCostType = null;
+                for(let i = 0; i < parts.length; i++) {
+                    if(isNaN(parseFloat(parts[i]))) {
+                        if(i === 0) plantName = parts[i];
+                        else currentCostType = parts[i];
+                    } else {
+                        if(currentCostType && plantName) {
+                            costs[currentCostType] = (costs[currentCostType] || 0) + parseFloat(parts[i]);
+                            currentCostType = null;
+                        }
+                    }
+                }
+                if(plantName && Object.keys(costs).length > 0) {
+                    let totalCost = 0;
+                    let costBreakdown = `<strong>Production cost for ${plantName}:</strong><br>`;
+                    for (const item in costs) {
+                        costBreakdown += `- ${item}: $${costs[item].toFixed(2)}<br>`;
+                        totalCost += costs[item];
+                    }
+                    costBreakdown += `<strong>Total Estimated Cost: $${totalCost.toFixed(2)}</strong>`;
+                    botResponse = costBreakdown;
+                    isApiResponseHtml = true;
+                    if (!plantLogs[plantName]) plantLogs[plantName] = [];
+                    plantLogs[plantName].push({
+                        date: new Date().toLocaleString(),
+                        notes: `Cost calculation - Total: $${totalCost.toFixed(2)}, Breakdown: ${JSON.stringify(costs)}`
+                    });
+                } else {
+                    botResponse = "For cost calculation, use: 'cost [plant] [item1] [amount1] ...'";
+                }
+            }
+            // ✨ Estimate Yield (Gemini)
+            else if (lowerMessage.startsWith("estimate yield for ")) {
+                const query = message.substring("estimate yield for ".length).trim();
+                const prompt = `As an agricultural assistant, provide a yield estimation for a farmer in Hawaii regarding: "${query}". Consider common factors that influence yield for such a crop in a Hawaiian context. Give a general estimate and mention key variables. Format your response for a chat application using HTML line breaks for readability.`;
+                botResponse = await callGeminiAPI(prompt);
+                isApiResponseHtml = true;
+            }
+            // ✨ Diagnose Crop Problem (Gemini)
+            else if (lowerMessage.startsWith("diagnose ")) {
+                const problemQuery = message.substring("diagnose ".length).trim();
+                const plantNameEndIndex = problemQuery.indexOf(" problem ");
+                let plantName = "this crop";
+                let description = problemQuery;
+
+                if (plantNameEndIndex !== -1) {
+                    plantName = problemQuery.substring(0, plantNameEndIndex);
+                    description = problemQuery.substring(plantNameEndIndex + " problem ".length);
+                }
+
+                const prompt = `A farmer in Hawaii is seeing this problem with their ${plantName}: "${description}". As an agricultural assistant, what are some possible causes and general advice or diagnostic questions to ask? Format the response for a chat application using HTML line breaks for readability, keeping it concise and actionable.`;
+                botResponse = await callGeminiAPI(prompt);
+                isApiResponseHtml = true;
+            }
+
+            addMessageToChat(botResponse, "bot", isApiResponseHtml);
+        }
+
+        sendButton.addEventListener('click', () => {
+            const message = userInput.value.trim();
+            if (message) {
+                addMessageToChat(message, "user");
+                userInput.value = '';
+                processUserMessage(message);
+            }
+        });
+
+        userInput.addEventListener('keypress', (event) => {
+            if (event.key === 'Enter') {
+                sendButton.click();
+            }
+        });
+
+        initialGreeting();
+    </script>
+
+</body>
+</html>
